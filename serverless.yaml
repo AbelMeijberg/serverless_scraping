@@ -1,0 +1,49 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Globals:
+  Function:
+    Runtime: "python3.8"
+    Timeout: 10
+
+Resources:
+  SaveApiRespLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: save_api_resp_to_ddb/
+      Handler: app.lambda_handler
+      Policies:
+        - DynamoDBWritePolicy:
+            TableName: !Ref DDBTable
+      Environment:
+        Variables:
+          DDB_TABLE: !Ref DDBTable
+          API_KEY: "{{resolve:secretsmanager:FakeSocialMediaApiKey:SecretString}}"
+
+  HandleDDBStream:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: handle_ddb_stream/
+      Handler: app.lambda_handler
+      Events:
+        DDBStream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt DDBTable.StreamArn
+            BatchSize: 10
+            MaximumBatchingWindowInSeconds: 10
+            StartingPosition: LATEST
+
+  DDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: "id"
+          AttributeType: "S"
+      BillingMode: "PAY_PER_REQUEST"
+      KeySchema:
+        - AttributeName: "id"
+          KeyType: "HASH"
+      StreamSpecification:
+        StreamViewType: 'NEW_IMAGE'
+
