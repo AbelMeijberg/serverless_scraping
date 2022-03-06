@@ -34,6 +34,14 @@ Resources:
             MaximumBatchingWindowInSeconds: 10
             StartingPosition: LATEST
 
+  StateMachineStarter:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: statemachine_starter
+      Handler: app.lambda_handler
+      Policies:
+        - "arn:aws:iam::aws:policy/AWSStepFunctionsFullAccess"
+
   DDBTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -46,4 +54,86 @@ Resources:
           KeyType: "HASH"
       StreamSpecification:
         StreamViewType: 'NEW_IMAGE'
+
+  ErrorTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: "SocialMediaScrapingErrors"
+
+# State Machine
+  SocialMediaScrapingStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Definition:
+        StartAt: InitExecutionCount
+        States:
+          InitExecutionCount:
+            Type: Pass
+            Result:
+              execution_count: 0
+            ResultPath: "$.input"
+            Next: SaveApiRespLambdaTask
+
+          SaveApiRespLambdaTask:
+            Type: Task
+            Resource: !GetAtt SaveApiRespLambda.Arn
+            ResultPath: "$.input"
+            Next: CheckIfDone
+            Retry:
+              - ErrorEquals:
+                  - "HTTPError"
+                  - "States.Timeout"
+                IntervalSeconds: 2
+                MaxAttempts: 10
+                BackoffRate: 2
+            Catch:
+              - ErrorEquals:
+                  - "States.ALL"
+                Next: PublishErrorToSNS
+
+          CheckIfDone:
+            Type: Choice
+            Choices:
+              - Variable: "$.input.wait_until"
+                IsNull: false
+                Next: WaitUntilQuotaReset
+              - Variable: "$.input.done"
+                BooleanEquals: true
+                Next: Done
+              - Variable: "$.input.execution_count"
+                NumericGreaterThan: 2000
+                Next: RestartMachine
+            Default: SaveApiRespLambdaTask
+
+          WaitUntilQuotaReset:
+            Type: Wait
+            TimestampPath: "$.input.wait_until"
+            Next: SaveApiRespLambdaTask
+
+          RestartMachine:
+            Type: Task
+            Resource: !GetAtt StateMachineStarter.Arn
+            Next: Done
+            Parameters:
+              StateMachineArn.$: "$$.StateMachine.Id"
+
+          PublishErrorToSNS:
+            Type: Task
+            Resource: "arn:aws:states:::sns:publish"
+            Parameters:
+              Message: "State Machine stopped, unknown error for Lambda. Check manually."
+              TopicArn: !Ref ErrorTopic
+            End: true
+
+          Done:
+            Type: Pass
+            End: true
+
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref SaveApiRespLambda
+        - LambdaInvokePolicy:
+            FunctionName: !Ref StateMachineStarter
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt ErrorTopic.TopicName
 
