@@ -14,8 +14,8 @@ class SocialMediaWrapper:
     def _generate_random_string(length: int) -> str:
         return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
 
-    def get_dummy_response(self) -> Dict[str, str]:
-        # generate a random json
+    def get_dummy_response(self, request_id: str) -> Dict[str, str]:
+        # generate a random json, we don't actually use the request_id
         dummy = {f"key{ind}": self._generate_random_string(10) for ind in range(10)}
         dummy["id"] = self._generate_random_string(10)
         self.fake_api_call_counter += 1
